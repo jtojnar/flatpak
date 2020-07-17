@@ -3464,6 +3464,81 @@ test_transaction_install_local (void)
   g_assert_nonnull (remote);
 }
 
+/* Test that even if a remote with a higher priority provides the runtime for
+ * an app, we pull the runtime from the same remote as the app. */
+static void
+test_transaction_app_runtime_same_remote (void)
+{
+  g_autoptr(FlatpakInstallation) inst = NULL;
+  g_autoptr(FlatpakTransaction) transaction = NULL;
+  g_autoptr(FlatpakRemote) remote = NULL;
+  g_autoptr(FlatpakInstalledRef) installed_runtime = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autofree char *app = NULL;
+  const char *runtime_origin;
+  gboolean res;
+  int old_prio;
+
+  app = g_strdup_printf ("app/org.test.Hello/%s/master",
+                         flatpak_get_default_arch ());
+
+  inst = flatpak_installation_new_user (NULL, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (inst);
+
+  empty_installation (inst);
+
+  add_remote_user ("test-runtime-only");
+
+  /* Drop caches so we find the new remote */
+  flatpak_installation_drop_caches (inst, NULL, &error);
+  g_assert_no_error (error);
+
+  remote = flatpak_installation_get_remote_by_name (inst, "test-runtime-only-repo", NULL, &error);
+  g_assert_no_error (error);
+
+  /* Even with a high priority on test-runtime-only, the runtime should come
+   * from test-repo */
+  old_prio = flatpak_remote_get_prio (remote);
+  flatpak_remote_set_prio (remote, 20);
+  res = flatpak_installation_modify_remote (inst, remote, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_true (res);
+
+  transaction = flatpak_transaction_new_for_installation (inst, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (transaction);
+
+  res = flatpak_transaction_add_install (transaction, repo_name, app, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_true (res);
+
+  res = flatpak_transaction_run (transaction, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_true (res);
+
+  installed_runtime = flatpak_installation_get_installed_ref (inst,
+                                                              FLATPAK_REF_KIND_RUNTIME,
+                                                              "org.test.Platform",
+                                                              flatpak_get_default_arch (),
+                                                              "master", NULL, &error);
+  g_assert_nonnull (installed_runtime);
+  g_assert_no_error (error);
+
+  runtime_origin = flatpak_installed_ref_get_origin (installed_runtime);
+  g_assert_nonnull (runtime_origin);
+  g_assert_cmpstr (runtime_origin, ==, repo_name);
+
+  /* Reset things */
+  flatpak_remote_set_prio (remote, old_prio);
+  res = flatpak_installation_modify_remote (inst, remote, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_true (res);
+
+  empty_installation (inst);
+  remove_remote_user ("test-runtime-only");
+}
+
 typedef struct
 {
   GMainLoop *loop;
@@ -4256,6 +4331,7 @@ main (int argc, char *argv[])
   g_test_add_func ("/library/transaction-flatpakref-remote-creation", test_transaction_flatpakref_remote_creation);
   g_test_add_func ("/library/transaction-deps", test_transaction_deps);
   g_test_add_func ("/library/transaction-install-local", test_transaction_install_local);
+  g_test_add_func ("/library/transaction-app-runtime-same-remote", test_transaction_app_runtime_same_remote);
   g_test_add_func ("/library/instance", test_instance);
   g_test_add_func ("/library/update-subpaths", test_update_subpaths);
   g_test_add_func ("/library/overrides", test_overrides);

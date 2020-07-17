@@ -12671,6 +12671,7 @@ flatpak_dir_list_enumerated_remotes (FlatpakDir   *self,
 
 char **
 flatpak_dir_search_for_dependency (FlatpakDir   *self,
+                                   const char   *prioritized_remote,
                                    const char   *runtime_ref,
                                    GCancellable *cancellable,
                                    GError      **error)
@@ -12683,9 +12684,19 @@ flatpak_dir_search_for_dependency (FlatpakDir   *self,
   if (remotes == NULL)
     return NULL;
 
+  /* Check @prioritized_remote before the rest */
+  if (!flatpak_dir_get_remote_nodeps (self, prioritized_remote) &&
+      !flatpak_dir_get_remote_noenumerate (self, prioritized_remote) &&
+      !flatpak_dir_get_remote_disabled (self, prioritized_remote) &&
+       flatpak_dir_remote_has_ref (self, prioritized_remote, runtime_ref))
+    g_ptr_array_add (found, g_strdup (prioritized_remote));
+
   for (i = 0; remotes != NULL && remotes[i] != NULL; i++)
     {
       const char *remote = remotes[i];
+
+      if (g_strcmp0 (remote, prioritized_remote) == 0)
+        continue;
 
       if (flatpak_dir_get_remote_nodeps (self, remote))
         continue;
@@ -12701,6 +12712,7 @@ flatpak_dir_search_for_dependency (FlatpakDir   *self,
 
 char **
 flatpak_dir_search_for_local_dependency (FlatpakDir   *self,
+                                         const char   *prioritized_remote,
                                          const char   *runtime_ref,
                                          GCancellable *cancellable,
                                          GError      **error)
@@ -12713,10 +12725,26 @@ flatpak_dir_search_for_local_dependency (FlatpakDir   *self,
   if (remotes == NULL)
     return NULL;
 
+  /* Check @prioritized_remote before the rest */
+  if (!flatpak_dir_get_remote_nodeps (self, prioritized_remote) &&
+      !flatpak_dir_get_remote_noenumerate (self, prioritized_remote) &&
+      !flatpak_dir_get_remote_disabled (self, prioritized_remote))
+    {
+      g_autofree char *commit = NULL;
+
+      commit = flatpak_dir_read_latest (self, prioritized_remote, runtime_ref,
+                                        NULL, NULL, NULL);
+      if (commit != NULL)
+        g_ptr_array_add (found, g_strdup (prioritized_remote));
+    }
+
   for (i = 0; remotes != NULL && remotes[i] != NULL; i++)
     {
       const char *remote = remotes[i];
       g_autofree char *commit = NULL;
+
+      if (g_strcmp0 (remote, prioritized_remote) == 0)
+        continue;
 
       if (flatpak_dir_get_remote_nodeps (self, remote))
         continue;
